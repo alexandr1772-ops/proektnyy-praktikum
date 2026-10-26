@@ -1,0 +1,45 @@
+
+Table users {
+  id integer [pk, increment]
+  full_name varchar(150) [not null]
+  username varchar(80) [unique, not null]
+  password_hash varchar(255) [not null]
+  role varchar(20) [not null]
+}
+
+Table groups {
+  id integer [pk, increment]
+  code varchar(20) [unique, not null]
+}
+
+Table students {
+  id integer [pk, increment]
+  user_id integer [unique, not null, ref: > users.id]
+  group_id integer [not null, ref: > groups.id]
+}
+
+Table subjects {
+  id integer [pk, increment]
+  name varchar(150) [not null]
+}
+
+Table lessons {
+  id integer [pk, increment]
+  subject_id integer [not null, ref: > subjects.id]
+  group_id integer [not null, ref: > groups.id]
+  lesson_date date [not null]
+  pair_number integer [not null]
+}
+
+Table attendance {
+  id integer [pk, increment]
+  lesson_id integer [not null, ref: > lessons.id]
+  student_id integer [not null, ref: > students.id]
+  status varchar(20) [not null]
+  marked_by_user_id integer [not null, ref: > users.id]
+  marked_at timestamp
+
+  indexes {
+    (lesson_id, student_id) [unique]
+  }
+}
