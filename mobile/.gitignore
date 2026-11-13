@@ -1,0 +1,12 @@
+# Android Studio / Gradle: локальные и сгенерированные файлы, в Git не попадают
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+build/
+/captures
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
