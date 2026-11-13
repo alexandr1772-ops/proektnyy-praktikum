@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from .config import DATABASE_URL
 
@@ -8,17 +9,16 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine_options = {"pool_pre_ping": True}
+if DATABASE_URL.startswith("sqlite"):
+    engine_options["connect_args"] = {"check_same_thread": False}
+if DATABASE_URL == "sqlite:///:memory:":
+    engine_options["poolclass"] = StaticPool
 
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False
-)
+engine = create_engine(DATABASE_URL, **engine_options)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
 def get_db():
-    db = SessionLocal()
-    try:
+    with SessionLocal() as db:
         yield db
-    finally:
-        db.close()

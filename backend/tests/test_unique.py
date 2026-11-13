@@ -4,8 +4,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import backend.app.seed as seed_module
-from backend.app.models import Attendance, Status
+import app.seed as seed_module
+from app.models import Attendance, Status
 
 
 def test_duplicate_attendance_is_rejected(monkeypatch):

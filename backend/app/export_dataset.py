@@ -1,4 +1,5 @@
 import csv
+import os
 from pathlib import Path
 
 from sqlalchemy import select
@@ -7,7 +8,12 @@ from .db import SessionLocal
 from .models import Attendance, Group, Lesson, Student, Subject
 
 
-OUT = Path(__file__).resolve().parents[2] / "data" / "attendance_history.csv"
+OUT = Path(
+    os.getenv(
+        "DATASET_EXPORT_PATH",
+        Path.cwd() / "data" / "attendance_history.csv",
+    )
+)
 
 
 def export():
