@@ -20,7 +20,7 @@ def test_health_and_seeded_database():
         assert data["users"] >= 1
         assert data["groups"] == 2
         assert data["students"] == 15
-        assert data["subjects"] == 3
+        assert data["subjects"] == 5
         assert data["lessons"] > 0
         assert data["attendance"] > 0
 

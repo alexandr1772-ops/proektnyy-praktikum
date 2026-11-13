@@ -34,8 +34,16 @@ def seed():
                 db.flush()
             groups[name] = group
 
+        # Создаём предметы
+        subjects_data = [
+            "Программирование",
+            "Математика",
+            "Базы данных",
+            "Физика",
+            "Английский язык",
+        ]
         subjects = {}
-        for name in ["Программирование", "Математика", "Базы данных"]:
+        for name in subjects_data:
             subject = db.scalar(select(Subject).where(Subject.name == name))
             if subject is None:
                 subject = Subject(name=name)
