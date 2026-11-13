@@ -23,6 +23,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-attendance}
       POSTGRES_USER: ${POSTGRES_USER:-attendance}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_change_me}
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-local_demo_change_me}
     ports:
       - "8000:8000"
     depends_on:

@@ -1,14 +1,14 @@
 # Проектный практикум — трекер посещаемости
 
-REST API на FastAPI с PostgreSQL для учёта студентов, занятий и посещаемости. Backend и база данных запускаются одной командой через Docker Compose; при первом старте таблицы создаются автоматически и заполняются демонстрационными данными.
+Учебный групповой проект для учёта посещаемости занятий: REST API на FastAPI, PostgreSQL и мобильный Android-клиент. Backend и база запускаются одной командой через Docker Compose; таблицы и демонстрационные данные создаются автоматически.
 
 ## Команда и роли
 
 | Участник | Роль | Ответственность |
 | --- | --- | --- |
-| Климов Н. | Mobile | Android-приложение на Kotlin и Jetpack Compose |
-| Сурков Г. | Backend, БД и ML | API, модели и схема PostgreSQL |
-| Гусаров А. | QA / DevOps | Docker, Compose, переменные окружения, CI и сетевой доступ к API |
+| **Климов Н.** | Mobile | Android-приложение на Kotlin и Jetpack Compose |
+| **Сурков Г.** | Backend, БД и ML | API, модели, схема PostgreSQL и ML-функция |
+| **Гусаров А.** | QA / DevOps | GitHub, Docker Compose, PostgreSQL, pytest, CI и сетевой доступ |
 
 Подробнее: [docs/team.md](docs/team.md).
 
@@ -20,66 +20,81 @@ REST API на FastAPI с PostgreSQL для учёта студентов, зан
 docker compose up --build
 ```
 
-Команда поднимает два контейнера:
-
-- `backend` — API на `0.0.0.0:8000`;
-- `db` — PostgreSQL 16 с постоянным Docker volume.
-
 После запуска доступны:
 
 - `http://localhost:8000/health` — состояние API;
-- `http://localhost:8000/health/db` — соединение с БД и количество записей;
+- `http://localhost:8000/health/db` — соединение с PostgreSQL и количество записей;
 - `http://localhost:8000/docs` — Swagger UI;
-- `http://localhost:8000/students`, `/lessons`, `/attendance` — демонстрационные данные.
+- `/groups`, `/lessons`, `/attendance`, `/stats`, `/risk` — рабочие эндпоинты проекта.
 
-Ожидаемый ответ `GET /health/db` сразу после чистого запуска:
+`GET /health/db` подтверждает соединение и возвращает счётчики всех шести таблиц: `users`, `groups`, `students`, `subjects`, `lessons`, `attendance`.
 
-```json
-{
-  "database": "connected",
-  "students": 2,
-  "lessons": 2,
-  "attendance": 1
-}
+Остановка без удаления данных:
+
+```bash
+docker compose down
 ```
 
-Остановить контейнеры можно командой `docker compose down`. Данные сохранятся. Для полностью чистого повторного запуска удалите volume командой `docker compose down --volumes`, затем снова выполните `docker compose up --build`.
+Полностью чистый повторный запуск:
+
+```bash
+docker compose down --volumes
+docker compose up --build
+```
 
 ## Переменные окружения и секреты
 
-В репозитории хранится только [.env.example](.env.example) с безопасными демонстрационными значениями. Файл `.env` добавлен в `.gitignore` и не должен попадать в GitHub.
-
-Для собственных значений создайте локальный `.env` по образцу:
+В репозитории хранится только [.env.example](.env.example). Файл `.env` исключён через `.gitignore` и не должен попадать в GitHub. Для собственных значений создайте локальный `.env`:
 
 ```dotenv
 POSTGRES_DB=attendance
 POSTGRES_USER=attendance
 POSTGRES_PASSWORD=your_local_password
+ADMIN_LOGIN=admin
+ADMIN_PASSWORD=your_local_admin_password
 ```
 
-Compose автоматически прочитает `.env`. Без него используются только локальные значения по умолчанию, поэтому проверочный запуск не требует ручной настройки.
+Compose автоматически читает `.env`. Без него используются только локальные демонстрационные значения, поэтому проверочный запуск не требует ручных правок.
 
 ## Доступ к API с телефона
 
-В `compose.yaml` порт опубликован как `8000:8000`, без привязки к `127.0.0.1`. Телефон и ноутбук должны находиться в одной Wi-Fi сети.
+Порт опубликован в `compose.yaml` как `8000:8000`, без привязки к `127.0.0.1`. Телефон и ноутбук должны находиться в одной Wi-Fi сети.
 
-1. Узнайте локальный IPv4-адрес ноутбука (`ipconfig` в Windows, `ip addr` в Linux или `ifconfig` в macOS).
+1. Узнайте локальный IPv4-адрес ноутбука (`ipconfig`, `ip addr` или `ifconfig`).
 2. Разрешите входящие TCP-подключения к порту 8000 в брандмауэре.
 3. На телефоне откройте `http://<IP-НОУТБУКА>:8000/health`.
 
-Например: `http://192.168.1.25:8000/health`. Если Android-клиент использует обычный HTTP, в его отладочной конфигурации должен быть разрешён cleartext-трафик.
+Например: `http://192.168.1.25:8000/health`. Для Android-клиента с обычным HTTP в отладочной конфигурации должен быть разрешён cleartext-трафик.
+
+## База данных и ER-диаграмма
+
+Реализованы шесть таблиц:
+
+- `users` — пользователи и роли;
+- `groups` — учебные группы;
+- `students` — студенты;
+- `subjects` — предметы;
+- `lessons` — занятия;
+- `attendance` — отметки посещаемости.
+
+ER-диаграмма: [docs/er_diagram.png](docs/er_diagram.png). Исходная схема: [docs/schema.dbml](docs/schema.dbml).
+
+При первом запуске создаются администратор, две группы, 15 студентов, три предмета, занятия и отметки за последние недели. Повторный запуск не дублирует данные.
 
 ## API
 
 | Метод | Путь | Назначение |
 | --- | --- | --- |
-| `GET` | `/health` | Проверка API |
-| `GET` | `/health/db` | Проверка PostgreSQL и заполнения БД |
-| `GET`, `POST` | `/students` | Список и создание студентов |
-| `GET`, `POST` | `/lessons` | Список и создание занятий |
-| `GET`, `POST` | `/attendance` | Список и создание отметок |
+| `POST` | `/auth/login` | Вход пользователя |
+| `GET` | `/groups` | Список групп |
+| `GET` | `/groups/{id}/students` | Студенты группы |
+| `GET` | `/lessons` | Занятия |
+| `GET`, `POST` | `/attendance` | Просмотр и создание отметок |
+| `GET` | `/stats` | Статистика посещаемости |
+| `GET` | `/risk` | Группа риска |
+| `GET` | `/health/db` | Проверка БД и начальных данных |
 
-## Тесты
+## Тестирование и CI
 
 ```bash
 cd backend
@@ -87,15 +102,19 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-GitHub Actions дополнительно собирает образы, запускает API с PostgreSQL и проверяет наличие начальных данных.
+GitHub Actions выполняет pytest, проверяет Compose, собирает контейнеры, запускает FastAPI с PostgreSQL и проверяет заполнение БД через `/health/db`.
+
+## ML-функция
+
+Выбранное направление — прогноз студентов группы риска по посещаемости. Сейчас `/risk` использует интерпретируемые пороги посещаемости; план дальнейшей модели на синтетических данных описан в [docs/ml_plan.md](docs/ml_plan.md). Демонстрационные результаты не следует считать надёжным прогнозом для реальных студентов.
 
 ## Структура
 
 ```text
-backend/       FastAPI, SQLAlchemy, тесты и Dockerfile
-mobile/        материалы Android-клиента
+backend/       FastAPI, SQLAlchemy, заполнение БД, тесты и Dockerfile
+mobile/        Android-клиент и материалы
 demo/          сценарий демонстрации
-docs/          архитектура, роли и ER-диаграмма
+docs/          архитектура, роли, ER-схема и ML-план
 compose.yaml   API + PostgreSQL
 .github/       CI для pytest и Docker Compose
 ```

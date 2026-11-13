@@ -1,6 +1,8 @@
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["ADMIN_LOGIN"] = "admin"
+os.environ["ADMIN_PASSWORD"] = "test-password"
 
 from fastapi.testclient import TestClient
 
@@ -11,35 +13,31 @@ def test_health_and_seeded_database():
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
 
-        database = client.get("/health/db")
-        assert database.status_code == 200
-        assert database.json()["database"] == "connected"
-        assert database.json()["students"] >= 2
-        assert database.json()["lessons"] >= 2
-        assert database.json()["attendance"] >= 1
+        response = client.get("/health/db")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["database"] == "connected"
+        assert data["users"] >= 1
+        assert data["groups"] == 2
+        assert data["students"] == 15
+        assert data["subjects"] == 3
+        assert data["lessons"] > 0
+        assert data["attendance"] > 0
 
-        students = client.get("/students")
-        assert students.status_code == 200
-        assert len(students.json()) >= 2
 
-
-def test_create_attendance_flow():
+def test_login_and_demo_endpoints():
     with TestClient(app) as client:
-        student = client.post("/students", json={"full_name": "Тестовый студент"})
-        lesson = client.post(
-            "/lessons",
-            json={"title": "Тест", "starts_at": "2026-11-12T10:00:00+03:00"},
+        login = client.post(
+            "/auth/login",
+            json={"login": "admin", "password": "test-password"},
         )
-        attendance = client.post(
-            "/attendance",
-            json={
-                "student_id": student.json()["id"],
-                "lesson_id": lesson.json()["id"],
-                "present": True,
-            },
-        )
+        assert login.status_code == 200
+        assert login.json()["role"] == "admin"
 
-        assert student.status_code == 201
-        assert lesson.status_code == 201
-        assert attendance.status_code == 201
-        assert attendance.json()["present"] is True
+        groups = client.get("/groups")
+        assert groups.status_code == 200
+        assert len(groups.json()) == 2
+
+        lessons = client.get("/lessons")
+        assert lessons.status_code == 200
+        assert len(lessons.json()) > 0
