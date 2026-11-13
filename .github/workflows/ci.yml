@@ -1,4 +1,4 @@
-name: Repository checks
+name: API and Docker checks
 
 on:
   pull_request:
@@ -8,12 +8,51 @@ permissions:
   contents: read
 
 jobs:
-  repository-check:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Check repository
-        run: echo "Repository checkout completed"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Run API tests
+        working-directory: backend
+        run: python -m pytest -q
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Start API and PostgreSQL
+        run: docker compose up --build --detach
+
+      - name: Verify API and seeded database
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health/db > health.json; then
+              python - <<'PY'
+          import json
+          with open("health.json", encoding="utf-8") as response:
+              data = json.load(response)
+          assert data["database"] == "connected"
+          assert data["students"] >= 2
+          assert data["lessons"] >= 2
+          assert data["attendance"] >= 1
+          PY
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+
+      - name: Stop containers
+        if: always()
+        run: docker compose down --volumes

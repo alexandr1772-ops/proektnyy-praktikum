@@ -4,29 +4,38 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-attendance}
       POSTGRES_USER: ${POSTGRES_USER:-attendance}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_change_me}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-attendance}:${POSTGRES_PASSWORD:-dev_only_password}@db:5432/${POSTGRES_DB:-attendance}
+      DB_HOST: db
+      DB_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-attendance}
+      POSTGRES_USER: ${POSTGRES_USER:-attendance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_change_me}
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-local_demo_change_me}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 
 volumes:
   postgres_data:
