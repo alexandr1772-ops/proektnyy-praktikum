@@ -1,26 +1,64 @@
+Enum role {
+  student
+  starosta
+  teacher
+  admin
+}
+
+Enum status {
+  present
+  absent
+  late
+  excused
+}
 
 Table users {
   id integer [pk, increment]
-  full_name varchar(150) [not null]
-  username varchar(80) [unique, not null]
+  login varchar(64) [unique, not null]
   password_hash varchar(255) [not null]
-  role varchar(20) [not null]
+  full_name varchar(128) [not null]
+  role role [not null]
 }
 
 Table groups {
   id integer [pk, increment]
-  code varchar(20) [unique, not null]
+  name varchar(32) [unique, not null]
 }
 
 Table students {
   id integer [pk, increment]
-  user_id integer [unique, not null, ref: > users.id]
+  full_name varchar(128) [not null]
   group_id integer [not null, ref: > groups.id]
+  user_id integer [unique]
+
+  Note: 'Аккаунт можно привязать после создания карточки студента.'
+}
+
+Ref: users.id - students.user_id
+
+Table staff_groups {
+  user_id integer [not null, ref: > users.id]
+  group_id integer [not null, ref: > groups.id]
+
+  indexes {
+    (user_id, group_id) [pk]
+  }
+}
+
+Table access_sessions {
+  token_hash varchar(64) [pk]
+  user_id integer [not null, ref: > users.id]
+  expires_at timestamp [not null]
+
+  indexes {
+    user_id
+    expires_at
+  }
 }
 
 Table subjects {
   id integer [pk, increment]
-  name varchar(150) [not null]
+  name varchar(128) [unique, not null]
 }
 
 Table lessons {
@@ -29,17 +67,23 @@ Table lessons {
   group_id integer [not null, ref: > groups.id]
   lesson_date date [not null]
   pair_number integer [not null]
+  start_time time [not null]
+  end_time time [not null]
+
+  indexes {
+    (group_id, lesson_date, pair_number) [unique, name: 'uq_lesson_slot']
+  }
 }
 
 Table attendance {
   id integer [pk, increment]
   lesson_id integer [not null, ref: > lessons.id]
   student_id integer [not null, ref: > students.id]
-  status varchar(20) [not null]
-  marked_by_user_id integer [not null, ref: > users.id]
-  marked_at timestamp
+  status status [not null]
+  note varchar(500)
+  marked_by integer [ref: > users.id]
 
   indexes {
-    (lesson_id, student_id) [unique]
+    (lesson_id, student_id) [unique, name: 'uq_attendance_lesson_student']
   }
 }

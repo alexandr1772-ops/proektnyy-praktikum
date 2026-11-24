@@ -34,6 +34,8 @@ def test_login_and_demo_endpoints():
         assert login.status_code == 200
         assert login.json()["role"] == "admin"
 
+        client.headers["Authorization"] = "Bearer " + login.json()["access_token"]
+
         groups = client.get("/groups")
         assert groups.status_code == 200
         assert len(groups.json()) == 2
