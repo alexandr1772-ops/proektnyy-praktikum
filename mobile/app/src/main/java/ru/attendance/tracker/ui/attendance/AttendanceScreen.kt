@@ -26,9 +26,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBackIosNew
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,8 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ru.attendance.tracker.data.AttendanceStatus
-import ru.attendance.tracker.data.AttendanceStore
-import ru.attendance.tracker.data.DemoData
+import ru.attendance.tracker.data.Change
+import ru.attendance.tracker.data.Mark
+import ru.attendance.tracker.data.dateText
 import ru.attendance.tracker.data.Lesson
 import ru.attendance.tracker.data.Student
 import ru.attendance.tracker.ui.common.AppCard
@@ -63,20 +63,6 @@ import ru.attendance.tracker.ui.common.avatarColors
 import ru.attendance.tracker.ui.lessons.subjectStyle
 import ru.attendance.tracker.ui.theme.AppColors
 import ru.attendance.tracker.ui.theme.LocalAppColors
-
-private val AllStatuses = listOf(
-    AttendanceStatus.Present,
-    AttendanceStatus.Absent,
-    AttendanceStatus.Late,
-    AttendanceStatus.Excused,
-)
-
-private fun AttendanceStatus.label() = when (this) {
-    AttendanceStatus.Present -> "Присутствует"
-    AttendanceStatus.Absent -> "Отсутствует"
-    AttendanceStatus.Late -> "Опоздал"
-    AttendanceStatus.Excused -> "Уважительная"
-}
 
 /** Цвета выбранной кнопки статуса: рамка, фон, текст. */
 private fun AttendanceStatus.palette(c: AppColors): Triple<Color, Color, Color> = when (this) {
@@ -89,21 +75,22 @@ private fun AttendanceStatus.palette(c: AppColors): Triple<Color, Color, Color> 
 @Composable
 fun AttendanceScreen(
     lesson: Lesson,
-    store: AttendanceStore,
+    students: List<Student>,
+    marks: List<Mark>,
+    busy: Boolean,
     onBack: () -> Unit,
-    onSaved: () -> Unit,
+    onSave: (Change.SaveMarks, (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAppColors.current
-    val students = DemoData.students
-    val draft: SnapshotStateMap<Int, AttendanceStatus> = remember(lesson.id) {
-        mutableStateMapOf<Int, AttendanceStatus>().apply { putAll(store.marksFor(lesson.id)) }
-    }
-    var query by rememberSaveable { mutableStateOf("") }
+    val saved = marks.associateBy { it.studentId }
+    val draft = remember(lesson.id) { mutableStateMapOf<Int, Mark>() }
+    var bulk by remember(lesson.id) { mutableStateOf(false) }
+    var error by remember(lesson.id) { mutableStateOf<String?>(null) }
+    var query by rememberSaveable(lesson.id) { mutableStateOf("") }
     val shown = students.filter { it.fullName.contains(query.trim(), ignoreCase = true) }
-
-    val marked = draft.size
-    val fraction = marked / students.size.toFloat()
+    val marked = (saved.keys + draft.keys).size
+    val fraction = if (students.isEmpty()) 0f else marked / students.size.toFloat()
 
     Column(modifier = modifier.fillMaxSize()) {
         // Верхняя строка с кнопкой «назад»
@@ -145,43 +132,77 @@ fun AttendanceScreen(
                     Text("${students.size} человека", color = colors.muted, fontSize = 14.sp)
                 }
             }
+            item {
+                TextButton(
+                    enabled = !busy && students.isNotEmpty(),
+                    onClick = {
+                        error = null
+                        bulk = true
+                        students.forEach { student ->
+                            val note = draft[student.id]?.note ?: saved[student.id]?.note.orEmpty()
+                            draft[student.id] = Mark(student.id, AttendanceStatus.Present, note)
+                        }
+                    },
+                ) { Text("Отметить всех") }
+            }
             item { SearchField(query) { query = it } }
             if (shown.isEmpty()) {
-                item { Text("Студент не найден", color = colors.muted, fontSize = 15.sp, modifier = Modifier.padding(vertical = 12.dp)) }
+                item { Text(if (students.isEmpty()) "Добавьте студентов в группу" else "Студент не найден", color = colors.muted, fontSize = 15.sp, modifier = Modifier.padding(vertical = 12.dp)) }
             }
             items(shown, key = { it.id }) { student ->
+                val mark = draft[student.id] ?: saved[student.id]
+                val dirty = draft[student.id] != null && draft[student.id] != saved[student.id]
                 StudentRow(
                     student = student,
                     group = lesson.group,
-                    selected = draft[student.id],
-                    onSelect = { status -> draft[student.id] = status },
+                    mark = mark,
+                    enabled = !busy,
+                    onSelect = { status ->
+                        error = null
+                        draft[student.id] = Mark(student.id, status, mark?.note.orEmpty())
+                    },
+                    onNote = { note -> if (mark != null) draft[student.id] = mark.copy(note = note) },
+                    onSave = if (!bulk && dirty && mark != null) {
+                        {
+                            onSave(Change.SaveMarks(lesson.id, listOf(mark), bulk = false)) { message ->
+                                error = message
+                                if (message == null) draft.remove(student.id)
+                            }
+                        }
+                    } else null,
                 )
             }
         }
 
-        // Нижняя панель с кнопкой сохранения
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(colors.navBar)
-                .padding(horizontal = ScreenPadding, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Button(
-                onClick = {
-                    store.save(lesson.id, draft)
-                    onSaved()
-                },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary),
+        if (bulk || error != null || busy) {
+            Column(
+                modifier = Modifier.fillMaxWidth().background(colors.navBar)
+                    .padding(horizontal = ScreenPadding, vertical = 8.dp),
             ) {
-                Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("Сохранить отметки", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                error?.let { Text(it, color = colors.dangerText) }
+                if (bulk) {
+                    Button(
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            onSave(Change.SaveMarks(lesson.id, draft.values.toList(), bulk = true)) { message ->
+                                error = message
+                                if (message == null) {
+                                    bulk = false
+                                    draft.clear()
+                                }
+                            }
+                        },
+                    ) { Text(if (busy) "Сохраняем…" else "Сохранить всю группу") }
+                    TextButton(enabled = !busy, onClick = {
+                        bulk = false
+                        error = null
+                        draft.clear()
+                    }) { Text("Отменить массовую отметку") }
+                } else if (busy) {
+                    Text("Сохраняем…", color = colors.muted)
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Text("Отмечено $marked из ${students.size} студентов", color = colors.muted, fontSize = 13.sp)
         }
     }
 }
@@ -202,7 +223,7 @@ private fun LessonSummary(lesson: Lesson) {
             Column {
                 Text(lesson.subject.name, color = colors.title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(2.dp))
-                Text("${lesson.group} • ${DemoData.todayText()}", color = colors.muted, fontSize = 14.sp)
+                Text("${lesson.group} • ${dateText(lesson.date)}", color = colors.muted, fontSize = 14.sp)
                 Text("${lesson.pair} пара • ${lesson.start}–${lesson.end}", color = colors.muted, fontSize = 14.sp)
             }
         }
@@ -237,7 +258,15 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
 }
 
 @Composable
-private fun StudentRow(student: Student, group: String, selected: AttendanceStatus?, onSelect: (AttendanceStatus) -> Unit) {
+private fun StudentRow(
+    student: Student,
+    group: String,
+    mark: Mark?,
+    enabled: Boolean,
+    onSelect: (AttendanceStatus) -> Unit,
+    onNote: (String) -> Unit,
+    onSave: (() -> Unit)?,
+) {
     val colors = LocalAppColors.current
     val (avatarBg, avatarFg) = avatarColors(student.id)
     AppCard(modifier = Modifier.fillMaxWidth(), contentPadding = 14.dp) {
@@ -253,21 +282,34 @@ private fun StudentRow(student: Student, group: String, selected: AttendanceStat
         }
         Spacer(Modifier.height(12.dp))
         if (!oneRow) {
-            AllStatuses.chunked(2).forEachIndexed { index, pair ->
+            AttendanceStatus.entries.chunked(2).forEachIndexed { index, pair ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = if (index == 0) 0.dp else 8.dp)) {
-                    pair.forEach { status -> StatusChip(status, selected == status, Modifier.weight(1f)) { onSelect(status) } }
+                    pair.forEach { status -> StatusChip(status, mark?.status == status, enabled, Modifier.weight(1f)) { onSelect(status) } }
                 }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                AllStatuses.forEach { status -> StatusChip(status, selected == status, Modifier.weight(1f)) { onSelect(status) } }
+                AttendanceStatus.entries.forEach { status -> StatusChip(status, mark?.status == status, enabled, Modifier.weight(1f)) { onSelect(status) } }
             }
+        }
+        if (mark != null) {
+            OutlinedTextField(
+                value = mark.note,
+                onValueChange = onNote,
+                enabled = enabled,
+                label = { Text("Примечание") },
+                maxLines = 3,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+        }
+        if (onSave != null) {
+            TextButton(enabled = enabled, onClick = onSave) { Text("Сохранить отметку") }
         }
     }
 }
 
 @Composable
-private fun StatusChip(status: AttendanceStatus, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun StatusChip(status: AttendanceStatus, selected: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val colors = LocalAppColors.current
     val (accent, soft, text) = status.palette(colors)
     val shape = RoundedCornerShape(12.dp)
@@ -276,7 +318,7 @@ private fun StatusChip(status: AttendanceStatus, selected: Boolean, modifier: Mo
             .clip(shape)
             .background(if (selected) soft else colors.chipOff)
             .then(if (selected) Modifier.border(BorderStroke(1.5.dp, accent), shape) else Modifier)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -289,7 +331,7 @@ private fun StatusChip(status: AttendanceStatus, selected: Boolean, modifier: Mo
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = status.label(),
+            text = status.label,
             color = if (selected) text else colors.muted,
             fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,

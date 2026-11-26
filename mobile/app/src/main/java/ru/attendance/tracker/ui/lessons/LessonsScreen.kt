@@ -33,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,8 +46,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
-import ru.attendance.tracker.data.AttendanceStore
-import ru.attendance.tracker.data.DemoData
+import ru.attendance.tracker.data.Journal
+import ru.attendance.tracker.data.Group
+import ru.attendance.tracker.data.dateText
 import ru.attendance.tracker.data.Lesson
 import ru.attendance.tracker.data.SubjectKind
 import ru.attendance.tracker.ui.common.AppCard
@@ -65,14 +65,15 @@ fun subjectStyle(kind: SubjectKind): Triple<ImageVector, Color, Color> {
     return when (kind) {
         SubjectKind.Database -> Triple(Icons.Filled.Storage, colors.primary, colors.soft)
         SubjectKind.Programming -> Triple(Icons.Filled.Code, colors.success, colors.successSoft)
+        SubjectKind.Other -> Triple(Icons.Outlined.School, colors.primary, colors.soft)
         SubjectKind.Math -> Triple(Icons.Filled.Calculate, colors.orange, colors.orangeSoft)
     }
 }
 
 @Composable
 fun LessonsScreen(
-    store: AttendanceStore,
-    group: String,
+    journal: Journal,
+    group: Group,
     onGroupChange: (String) -> Unit,
     onOpenLesson: (Lesson) -> Unit,
     modifier: Modifier = Modifier,
@@ -80,16 +81,15 @@ fun LessonsScreen(
     val colors = LocalAppColors.current
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    val today = remember { DemoData.todayText() }
-
-    val lessons = DemoData.lessons.filter { it.subject.name.contains(query.trim(), ignoreCase = true) }
+    val total = journal.students.count { it.groupId == group.id }
+    val lessons = journal.lessonCards(group.id).filter { it.subject.name.contains(query.trim(), ignoreCase = true) }
 
     Column(modifier = modifier.fillMaxSize()) {
         ScreenHeader(
             title = "Занятия",
-            subtitle = today,
+            subtitle = "Расписание и журнал посещаемости",
             trailing = {
-                GroupChip(group = group, groups = DemoData.groups, onSelect = onGroupChange)
+                GroupChip(group = group.name, groups = journal.groups.map { it.name }, onSelect = onGroupChange)
                 Spacer(Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
@@ -143,10 +143,10 @@ fun LessonsScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (lessons.isEmpty()) {
-                Text("Ничего не найдено", color = colors.muted, fontSize = 15.sp, modifier = Modifier.padding(top = 24.dp))
+                Text(if (query.isBlank()) "В этой группе пока нет занятий" else "Ничего не найдено", color = colors.muted, fontSize = 15.sp, modifier = Modifier.padding(top = 24.dp))
             }
             lessons.forEach { lesson ->
-                LessonCard(lesson, marked = store.markedCount(lesson.id), total = DemoData.students.size) {
+                LessonCard(lesson, marked = journal.marks(lesson.id).size, total = total) {
                     onOpenLesson(lesson)
                 }
             }
@@ -160,7 +160,7 @@ fun LessonsScreen(
 private fun LessonCard(lesson: Lesson, marked: Int, total: Int, onClick: () -> Unit) {
     val colors = LocalAppColors.current
     val (icon, tint, tile) = subjectStyle(lesson.subject.kind)
-    val fraction = marked / total.toFloat()
+    val fraction = if (total == 0) 0f else marked / total.toFloat()
     val percent = (fraction * 100).roundToInt()
     val barColor = when {
         marked == 0 -> colors.track
@@ -187,7 +187,7 @@ private fun LessonCard(lesson: Lesson, marked: Int, total: Int, onClick: () -> U
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Groups, null, tint = colors.muted, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(lesson.group, color = colors.muted, fontSize = 14.sp)
+                    Text("${lesson.group} • ${dateText(lesson.date)}", color = colors.muted, fontSize = 14.sp)
                 }
                 Spacer(Modifier.height(4.dp))
                 // Время и номер пары: если не помещаются в одну строку, пара переносится целиком
