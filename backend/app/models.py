@@ -1,10 +1,12 @@
 import enum
-from datetime import date, time
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     Date,
+    DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Time,
@@ -48,10 +50,27 @@ class Group(Base):
 
 class Student(Base):
     __tablename__ = "students"
+    __table_args__ = (Index("uq_students_user_id", "user_id", unique=True),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     full_name: Mapped[str] = mapped_column(String(128))
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class StaffGroup(Base):
+    __tablename__ = "staff_groups"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), primary_key=True)
+
+
+class AccessSession(Base):
+    __tablename__ = "access_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 class Subject(Base):
@@ -97,6 +116,7 @@ class Attendance(Base):
     lesson_id: Mapped[int] = mapped_column(ForeignKey("lessons.id"))
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
     status: Mapped[Status] = mapped_column(Enum(Status))
+    note: Mapped[str | None] = mapped_column(String(500))
     marked_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
         nullable=True,
