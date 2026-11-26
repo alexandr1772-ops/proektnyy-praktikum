@@ -36,9 +36,23 @@ curl.exe --fail-with-body -H "Authorization: Bearer $token" -o attendance.csv "h
 ```powershell
 cd backend
 python -m pip install -r requirements-dev.txt
-python -m pytest -q --cov=app --cov-report=term-missing --cov-fail-under=40
+python -m pytest -q tests --cov=app --cov-report=term-missing --cov-fail-under=40
 python -m app.risk_model
 ```
+
+GitHub Actions также запускает сценарий демо через HTTP на Docker Compose с PostgreSQL.
+Для локального повтора запустите свежий тестовый стенд с отдельной БД.
+Передайте пароль администратора через переменную окружения `ADMIN_PASSWORD`
+при запуске Compose и pytest. Если меняли логин, так же передайте `ADMIN_LOGIN`.
+Из каталога `backend` выполните:
+
+```powershell
+$env:SPRINT2_E2E_BASE_URL = 'http://127.0.0.1:8000'
+python -m pytest -q e2e
+Remove-Item Env:SPRINT2_E2E_BASE_URL
+```
+
+Сценарий записывает тестовые данные в БД стенда.
 
 ## Проверка с телефона
 
