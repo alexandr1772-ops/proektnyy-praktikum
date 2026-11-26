@@ -24,7 +24,7 @@ jobs:
 
       - name: Run API tests
         working-directory: backend
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=app --cov-report=term-missing --cov-fail-under=40
 
       - name: Validate Compose configuration
         run: docker compose config --quiet

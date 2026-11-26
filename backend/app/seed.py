@@ -1,29 +1,33 @@
 import os
 from datetime import date, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
-from .db import Base, SessionLocal, engine
+from .db import SessionLocal, engine, initialize_schema
 from .models import Attendance, Group, Lesson, Role, Status, Student, Subject, User
 from .security import hash_password
 
 
 def seed():
-    Base.metadata.create_all(bind=engine)
+    initialize_schema(engine)
     admin_login = os.getenv("ADMIN_LOGIN", "admin")
     admin_password = os.environ["ADMIN_PASSWORD"]
 
     with SessionLocal() as db:
+        if engine.dialect.name == "postgresql":
+            db.execute(text("SELECT pg_advisory_xact_lock(251002)"))
         admin = db.scalar(select(User).where(User.login == admin_login))
-        if admin is None:
-            admin = User(
-                login=admin_login,
-                password_hash=hash_password(admin_password),
-                full_name="Администратор",
-                role=Role.admin,
-            )
-            db.add(admin)
-            db.flush()
+        if admin is not None:
+            return
+
+        admin = User(
+            login=admin_login,
+            password_hash=hash_password(admin_password),
+            full_name="Администратор",
+            role=Role.admin,
+        )
+        db.add(admin)
+        db.flush()
 
         groups = {}
         for name in ["IS-21", "IS-22"]:
