@@ -4,6 +4,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val attendanceSource = providers.gradleProperty("attendanceSource").orElse("demo").get()
+val attendanceApiUrl = providers.gradleProperty("attendanceApiUrl").orElse("http://10.0.2.2:8000").get()
+require(attendanceSource in setOf("demo", "api")) { "attendanceSource must be demo or api" }
+require(attendanceApiUrl.none { it in listOf('"', '\\', '\r', '\n') }) { "Invalid attendanceApiUrl" }
+
 android {
     namespace = "ru.attendance.tracker"
     compileSdk = 35
@@ -14,6 +19,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "ATTENDANCE_SOURCE", "\"$attendanceSource\"")
+        buildConfigField("String", "ATTENDANCE_API_URL", "\"$attendanceApiUrl\"")
     }
 
     buildTypes {
@@ -33,6 +40,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -46,6 +54,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

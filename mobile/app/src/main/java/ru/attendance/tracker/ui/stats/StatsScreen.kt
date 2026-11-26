@@ -23,7 +23,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,7 +49,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ru.attendance.tracker.data.DemoData
+import java.time.LocalDate
+import java.time.DayOfWeek
+import java.time.temporal.TemporalAdjusters
+import ru.attendance.tracker.data.Group
+import ru.attendance.tracker.data.Journal
+import ru.attendance.tracker.data.Risk
+import ru.attendance.tracker.data.Subject
+import ru.attendance.tracker.data.attendancePercent
 import ru.attendance.tracker.ui.common.AppCard
 import ru.attendance.tracker.ui.common.Avatar
 import ru.attendance.tracker.ui.common.GroupChip
@@ -70,19 +76,51 @@ private const val WEEKS_8 = "8 недель"
 private const val WEEKS_4 = "4 недели"
 
 @Composable
-fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifier = Modifier) {
+fun StatsScreen(
+    journal: Journal,
+    group: Group,
+    onGroupChange: (String) -> Unit,
+    personal: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val colors = LocalAppColors.current
     var periodIndex by rememberSaveable { mutableIntStateOf(0) }
     var weeksRange by rememberSaveable { mutableStateOf(WEEKS_8) }
     var sort by rememberSaveable { mutableStateOf(SORT_BY_PERCENT) }
     var showAll by rememberSaveable { mutableStateOf(false) }
-    val period = DemoData.periods[periodIndex]
+    val periods = listOf("Неделя", "Месяц", "Семестр", "Весь период")
+    val today = LocalDate.now()
+    val start = when (periodIndex) {
+        0 -> today.minusDays(6)
+        1 -> today.minusDays(29)
+        2 -> today.minusMonths(6).plusDays(1)
+        else -> null
+    }
+    val previousStart = when (periodIndex) {
+        0 -> today.minusDays(13)
+        1 -> today.minusDays(59)
+        2 -> start?.minusMonths(6)
+        else -> null
+    }
+    val marks = journal.groupEntries(group.id, start, today)
+    val average = attendancePercent(marks)
+    val previous = if (previousStart != null && start != null) {
+        attendancePercent(journal.groupEntries(group.id, previousStart, start.minusDays(1)))
+    } else null
+    val delta = if (average != null && previous != null) average - previous else null
+    val groupLessons = journal.lessons.filter { it.groupId == group.id }.groupBy { it.subjectId }
+    val subjects = journal.subjects.mapNotNull { subject ->
+        val lessons = groupLessons[subject.id] ?: return@mapNotNull null
+        val ids = lessons.map { it.id }.toSet()
+        Subject(subject.name, subject.kind, attendancePercent(marks.filter { it.lessonId in ids }))
+    }
+    val students = journal.studentCards(group.id, marks)
 
     Column(modifier = modifier.fillMaxSize()) {
         ScreenHeader(
             title = "Статистика",
-            subtitle = "Посещаемость и анализ группы",
-            trailing = { GroupChip(group, DemoData.groups, onGroupChange) },
+            subtitle = if (personal) "Моя посещаемость" else "Посещаемость и анализ группы",
+            trailing = { if (!personal) GroupChip(group.name, journal.groups.map { it.name }, onGroupChange) },
         )
         Spacer(Modifier.height(14.dp))
 
@@ -95,7 +133,7 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
         ) {
             // Период
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                DemoData.periods.forEachIndexed { index, item ->
+                periods.forEachIndexed { index, item ->
                     val selected = index == periodIndex
                     Box(
                         modifier = Modifier
@@ -107,7 +145,7 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            item.label,
+                            item,
                             color = if (selected) colors.onPrimary else colors.title,
                             fontSize = 13.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
@@ -117,7 +155,10 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
                 }
             }
 
-            AverageCard(period.average, period.delta, period.comparedTo)
+            AverageCard(
+                average, delta, if (delta == null) "Учитываются отметки за выбранный период" else "к предыдущему периоду",
+                if (personal) "Моя посещаемость" else "Средняя посещаемость группы",
+            )
 
             // Посещаемость по неделям
             AppCard(modifier = Modifier.fillMaxWidth()) {
@@ -126,16 +167,22 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
                     OptionChip(weeksRange, listOf(WEEKS_8, WEEKS_4), { weeksRange = it })
                 }
                 Spacer(Modifier.height(14.dp))
-                val values = if (weeksRange == WEEKS_8) DemoData.weeks else DemoData.weeks.takeLast(4)
-                val firstWeek = DemoData.weeks.size - values.size + 1
-                WeeksChart(values, firstWeek)
+                val count = if (weeksRange == WEEKS_8) 8 else 4
+                val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                val weeks = List(count) { monday.minusWeeks((count - 1 - it).toLong()) }
+                val values = weeks.map { week ->
+                    attendancePercent(journal.groupEntries(group.id, week, minOf(today, week.plusDays(6))))
+                }
+                if (values.any { it != null }) WeeksChart(values, weeks)
+                else Text("За эти недели отметок нет", color = colors.muted)
             }
 
             // По предметам
             AppCard(modifier = Modifier.fillMaxWidth()) {
                 Text("Посещаемость по предметам", color = colors.title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))
-                DemoData.subjects.forEachIndexed { index, subject ->
+                if (subjects.isEmpty()) Text("По предметам пока нет данных", color = colors.muted)
+                subjects.forEachIndexed { index, subject ->
                     val (icon, tint, tile) = subjectStyle(subject.kind)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -150,32 +197,32 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(subject.name, color = colors.title, fontSize = 15.sp, modifier = Modifier.weight(1f))
                                 Spacer(Modifier.width(8.dp))
-                                Text("${subject.percent}%", color = percentColor(subject.percent), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text(subject.percent?.let { "$it%" } ?: "—", color = subject.percent?.let { percentColor(it) } ?: colors.muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.height(6.dp))
-                            ProgressBar(subject.percent / 100f, percentBarColor(subject.percent), Modifier.fillMaxWidth(), 8.dp)
+                            subject.percent?.let { ProgressBar(it / 100f, percentBarColor(it), Modifier.fillMaxWidth(), 8.dp) }
                         }
-                        Icon(Icons.Filled.ChevronRight, null, tint = colors.icon, modifier = Modifier.size(22.dp))
                     }
-                    if (index != DemoData.subjects.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
+                    if (index != subjects.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
                 }
             }
 
             // Студенты
             AppCard(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Студенты группы", color = colors.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    OptionChip(sort, listOf(SORT_BY_PERCENT, SORT_BY_NAME), { sort = it })
+                    Text(if (personal) "Мои данные" else "Студенты группы", color = colors.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (!personal) OptionChip(sort, listOf(SORT_BY_PERCENT, SORT_BY_NAME), { sort = it })
                 }
                 Spacer(Modifier.height(6.dp))
                 val sorted = if (sort == SORT_BY_PERCENT) {
-                    DemoData.students.sortedByDescending { it.percent }
+                    students.sortedByDescending { it.percent }
                 } else {
-                    DemoData.students.sortedBy { it.fullName }
+                    students.sortedBy { it.fullName }
                 }
                 val visible = if (showAll) sorted else sorted.take(5)
+                if (visible.isEmpty()) Text("Данных о студентах пока нет", color = colors.muted)
                 visible.forEachIndexed { index, student ->
-                    val (bg, fg) = avatarColors(student.id, student.risk)
+                    val (bg, fg) = avatarColors(student.id, student.risk ?: Risk.Low)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -187,18 +234,17 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(student.shortName, color = colors.title, fontSize = 15.sp, modifier = Modifier.weight(1f))
                                 Spacer(Modifier.width(8.dp))
-                                Text("${student.percent}%", color = percentColor(student.percent), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text(student.percent?.let { "$it%" } ?: "—", color = student.percent?.let { percentColor(it) } ?: colors.muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.height(6.dp))
-                            ProgressBar(student.percent / 100f, percentBarColor(student.percent), Modifier.fillMaxWidth(), 8.dp)
+                            student.percent?.let { ProgressBar(it / 100f, percentBarColor(it), Modifier.fillMaxWidth(), 8.dp) }
                         }
-                        Icon(Icons.Filled.ChevronRight, null, tint = colors.icon, modifier = Modifier.size(22.dp))
                     }
                     if (index != visible.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = if (showAll) "Свернуть" else "Показать всех (${DemoData.students.size})",
+                if (students.size > 5) Text(
+                    text = if (showAll) "Свернуть" else "Показать всех (${students.size})",
                     color = colors.primary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -216,7 +262,7 @@ fun StatsScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifi
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AverageCard(average: Int, delta: Int?, comparedTo: String) {
+private fun AverageCard(average: Int?, delta: Int?, comparedTo: String, title: String) {
     val colors = LocalAppColors.current
     val shape = RoundedCornerShape(20.dp)
     Row(
@@ -229,8 +275,8 @@ private fun AverageCard(average: Int, delta: Int?, comparedTo: String) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("Средняя посещаемость группы", color = colors.label, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text("$average%", color = colors.title, fontSize = 44.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = colors.label, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(average?.let { "$it%" } ?: "Нет данных", color = colors.title, fontSize = 44.sp, fontWeight = FontWeight.Bold)
             FlowRow(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -263,7 +309,7 @@ private fun AverageCard(average: Int, delta: Int?, comparedTo: String) {
             }
         }
         Spacer(Modifier.width(12.dp))
-        Donut(percent = average)
+        if (average != null) Donut(percent = average)
     }
 }
 
@@ -287,7 +333,7 @@ private fun Donut(percent: Int) {
 
 /** Столбчатая диаграмма посещаемости по неделям. */
 @Composable
-private fun WeeksChart(values: List<Int>, firstWeek: Int) {
+private fun WeeksChart(values: List<Int?>, weeks: List<LocalDate>) {
     val colors = LocalAppColors.current
     val measurer = rememberTextMeasurer()
     // Подписи на графике не должны расти вместе с системным шрифтом, иначе они налезают друг на друга
@@ -318,6 +364,10 @@ private fun WeeksChart(values: List<Int>, firstWeek: Int) {
         val barW = slot * 0.62f
         values.forEachIndexed { index, value ->
             val left = leftPad + slot * index + (slot - barW) / 2
+            val week = weeks[index]
+            val weekLayout = measurer.measure("${week.dayOfMonth}.${week.monthValue}", axisStyle)
+            drawText(weekLayout, topLeft = Offset(left + (barW - weekLayout.size.width) / 2, bottomY + 6.dp.toPx()))
+            if (value == null) return@forEachIndexed
             val h = chartH * value / 100f
             val top = bottomY - h
             val path = Path().apply {
@@ -333,8 +383,6 @@ private fun WeeksChart(values: List<Int>, firstWeek: Int) {
 
             val valueLayout = measurer.measure("$value%", valueStyle)
             drawText(valueLayout, topLeft = Offset(left + (barW - valueLayout.size.width) / 2, top - valueLayout.size.height - 2.dp.toPx()))
-            val weekLayout = measurer.measure("${firstWeek + index}", axisStyle)
-            drawText(weekLayout, topLeft = Offset(left + (barW - weekLayout.size.width) / 2, bottomY + 6.dp.toPx()))
         }
     }
 }

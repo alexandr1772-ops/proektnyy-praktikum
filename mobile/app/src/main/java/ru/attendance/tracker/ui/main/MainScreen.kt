@@ -1,13 +1,6 @@
 package ru.attendance.tracker.ui.main
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -24,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,17 +25,25 @@ import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.GppMaybe
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.GppMaybe
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,11 +55,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import ru.attendance.tracker.data.AttendanceStore
-import ru.attendance.tracker.data.DemoData
-import ru.attendance.tracker.data.Lesson
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import ru.attendance.tracker.data.Account
+import ru.attendance.tracker.data.AttendanceRepository
+import ru.attendance.tracker.data.Change
+import ru.attendance.tracker.data.Journal
+import ru.attendance.tracker.data.JournalException
+import ru.attendance.tracker.data.Role
 import ru.attendance.tracker.ui.attendance.AttendanceScreen
+import ru.attendance.tracker.ui.manage.ManageScreen
 import ru.attendance.tracker.ui.lessons.LessonsScreen
 import ru.attendance.tracker.ui.login.LoginBackground
 import ru.attendance.tracker.ui.profile.ProfileScreen
@@ -69,98 +78,179 @@ private enum class Tab(val title: String, val selected: ImageVector, val unselec
     Lessons("Занятия", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth),
     Stats("Статистика", Icons.Filled.BarChart, Icons.Outlined.BarChart),
     Risk("Риск", Icons.Filled.GppMaybe, Icons.Outlined.GppMaybe),
+    Manage("Данные", Icons.Filled.Folder, Icons.Outlined.Folder),
     Profile("Профиль", Icons.Filled.Person, Icons.Outlined.Person),
 }
 
-/** Главный экран после входа: четыре вкладки и отметка посещаемости внутри «Занятий». */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MainScreen(onLogout: () -> Unit, modifier: Modifier = Modifier) {
+fun MainScreen(
+    repository: AttendanceRepository,
+    account: Account,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val colors = LocalAppColors.current
-    val store = remember { AttendanceStore() }
-    var tab by rememberSaveable { mutableStateOf(Tab.Lessons) }
-    var group by rememberSaveable { mutableStateOf(DemoData.groups.first()) }
-    var openLessonId by rememberSaveable { mutableStateOf<Int?>(null) }
-    var toast by remember { mutableStateOf<String?>(null) }
-    val openLesson: Lesson? = DemoData.lessons.firstOrNull { it.id == openLessonId }
+    val scope = rememberCoroutineScope()
+    val messages = remember { SnackbarHostState() }
+    val personal = account.role == Role.Student
+    val tabs = if (personal) listOf(Tab.Stats, Tab.Profile) else Tab.entries
+    val firstTab = tabs.first()
+    var tab by rememberSaveable(account.login) { mutableStateOf(firstTab) }
+    var groupId by rememberSaveable(account.login) { mutableStateOf<Int?>(null) }
+    var openLessonId by rememberSaveable(account.login) { mutableStateOf<Int?>(null) }
+    var journal by remember { mutableStateOf<Journal?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
 
-    // «Назад» закрывает отметку, а с других вкладок возвращает на «Занятия»
-    BackHandler(enabled = openLesson != null) { openLessonId = null }
-    BackHandler(enabled = openLesson == null && tab != Tab.Lessons) { tab = Tab.Lessons }
+    fun notify(message: String) {
+        scope.launch { messages.showSnackbar(message) }
+    }
 
-    LaunchedEffect(toast) {
-        if (toast != null) {
-            delay(2200)
-            toast = null
+    fun perform(operation: suspend () -> Unit) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try {
+                operation()
+            } finally {
+                busy = false
+            }
         }
     }
 
+    suspend fun load(): Journal = withContext(Dispatchers.IO) { repository.load(account) }
+
+    fun refresh() = perform {
+        try {
+            journal = load()
+            loadError = null
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            loadError = error.userMessage("Не удалось загрузить журнал")
+        }
+    }
+
+    fun submit(change: suspend () -> Change, done: (String?) -> Unit = { error -> error?.let(::notify) }) {
+        perform {
+            val edit = try {
+                val input = change()
+                withContext(Dispatchers.IO) { repository.change(account, input) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                done(error.userMessage("Не удалось выполнить действие"))
+                return@perform
+            }
+            done(null)
+            try {
+                journal = load()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                loadError = "Изменение сохранено. Обновите журнал, чтобы продолжить"
+            }
+            notify(edit)
+        }
+    }
+
+    LaunchedEffect(repository, account) { refresh() }
+
+    val data = journal
+    val group = data?.groups?.firstOrNull { it.id == groupId } ?: data?.groups?.firstOrNull()
+    val openLesson = if (!personal && group != null && data != null) {
+        data.lessonCards(group.id).firstOrNull { it.id == openLessonId }
+    } else null
+    val selectGroup: (String) -> Unit = { name ->
+        groupId = data?.groups?.firstOrNull { it.name == name }?.id
+        openLessonId = null
+    }
+
+    BackHandler(enabled = openLessonId != null) { if (!busy) openLessonId = null }
+    BackHandler(enabled = openLessonId == null && tab != firstTab) { if (!busy) tab = firstTab }
+
     Box(modifier = modifier.fillMaxSize().background(colors.background)) {
         LoginBackground(dark = colors.isDark, modifier = Modifier.fillMaxSize())
-
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.weight(1f).imePadding()) {
-                if (openLesson != null) {
-                    AttendanceScreen(
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).imePadding()) {
+                val error = loadError
+                when {
+                    error != null -> Column(Modifier.statusBarsPadding().padding(16.dp)) {
+                        Text(error, color = colors.dangerText)
+                        Button(onClick = ::refresh, enabled = !busy) { Text("Обновить журнал") }
+                        TextButton(onClick = onLogout, enabled = !busy) { Text("Выйти") }
+                    }
+                    data == null -> Column(Modifier.statusBarsPadding().padding(16.dp)) {
+                        Text("Загрузка журнала…", color = colors.title)
+                    }
+                    openLesson != null && group != null -> AttendanceScreen(
                         lesson = openLesson,
-                        store = store,
-                        onBack = { openLessonId = null },
-                        onSaved = {
-                            openLessonId = null
-                            toast = "Отметки сохранены"
-                        },
+                        students = data.studentCards(group.id),
+                        marks = data.marks(openLesson.id),
+                        busy = busy,
+                        onBack = { if (!busy) openLessonId = null },
+                        onSave = { change, done -> submit({ change }, done) },
                     )
-                } else {
-                    Crossfade(targetState = tab, label = "tab") { current ->
-                        when (current) {
-                            Tab.Lessons -> LessonsScreen(
-                                store = store,
-                                group = group,
-                                onGroupChange = { group = it },
-                                onOpenLesson = { openLessonId = it.id },
-                            )
-                            Tab.Stats -> StatsScreen(group, { group = it })
-                            Tab.Risk -> RiskScreen(group, { group = it })
-                            Tab.Profile -> ProfileScreen(group, onLogout)
+                    else -> when (tab) {
+                        Tab.Lessons -> if (group != null) {
+                            LessonsScreen(data, group, selectGroup, onOpenLesson = { openLessonId = it.id })
+                        } else {
+                            Column(Modifier.statusBarsPadding().padding(16.dp)) {
+                                Text("Нет доступных групп", color = colors.title)
+                                if (account.role == Role.Admin) {
+                                    TextButton(onClick = { tab = Tab.Manage }) { Text("Открыть группы") }
+                                }
+                            }
                         }
+                        Tab.Stats -> if (group != null) StatsScreen(data, group, selectGroup, personal)
+                            else Text("Нет данных о посещаемости", Modifier.statusBarsPadding().padding(16.dp))
+                        Tab.Risk -> if (group != null) RiskScreen(data, group, selectGroup, demo = repository.isDemo)
+                            else Text("Нет данных для прогноза", Modifier.statusBarsPadding().padding(16.dp))
+                        Tab.Manage -> ManageScreen(
+                            data, group, account.role, busy, selectGroup,
+                            onChange = { change, done -> submit({ change }, done) },
+                            onImport = { read -> submit(read) },
+                            onExport = { id, write ->
+                                perform {
+                                    try {
+                                        write(withContext(Dispatchers.IO) { repository.export(account, id) })
+                                        notify("Отчёт CSV сохранён")
+                                    } catch (error: CancellationException) {
+                                        throw error
+                                    } catch (error: Exception) {
+                                        notify(error.userMessage("Не удалось сохранить отчёт CSV"))
+                                    }
+                                }
+                            },
+                        )
+                        Tab.Profile -> ProfileScreen(account, data, group, repository.label, onLogout = onLogout)
                     }
                 }
             }
 
-            // Когда открыта клавиатура, нижняя панель уступает ей место
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!WindowInsets.isImeVisible) {
-                BottomBar(
-                    selected = tab,
-                    onSelect = {
+                BottomBar(tabs, tab) {
+                    if (!busy) {
                         openLessonId = null
                         tab = it
-                    },
-                )
+                    }
+                }
             }
         }
-
-        AnimatedVisibility(
-            visible = toast != null,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 110.dp),
-            enter = fadeIn() + slideInVertically { it / 2 },
-            exit = fadeOut() + slideOutVertically { it / 2 },
-        ) {
-            Text(
-                text = toast ?: "",
-                color = Color.White,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xE61B2538))
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-            )
-        }
+        SnackbarHost(
+            hostState = messages,
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 68.dp),
+        )
     }
 }
 
+private fun Exception.userMessage(fallback: String): String =
+    if (this is JournalException) message ?: fallback else fallback
+
 @Composable
-private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
+private fun BottomBar(tabs: List<Tab>, selected: Tab, onSelect: (Tab) -> Unit) {
     val colors = LocalAppColors.current
     val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     Row(
@@ -172,7 +262,7 @@ private fun BottomBar(selected: Tab, onSelect: (Tab) -> Unit) {
             .navigationBarsPadding()
             .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {
-        Tab.entries.forEach { tab ->
+        tabs.forEach { tab ->
             val isSelected = tab == selected
             Column(
                 modifier = Modifier
