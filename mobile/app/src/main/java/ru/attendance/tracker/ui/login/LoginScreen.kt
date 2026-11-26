@@ -53,6 +53,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import ru.attendance.tracker.data.JournalException
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -109,15 +113,17 @@ private class Metrics(private val k: Float, private val squeeze: Float) {
 
 @Composable
 fun LoginScreen(
-    /** Возвращает true, если вход выполнен. При false под полем пароля появляется ошибка. */
-    onLogin: (login: String, password: String) -> Boolean,
+    onLogin: suspend (login: String, password: String) -> Unit,
     modifier: Modifier = Modifier,
+    modeHint: String = "",
 ) {
     var login by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
-    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
     var submitted by rememberSaveable { mutableStateOf(false) }
-    var loginFailed by rememberSaveable { mutableStateOf(false) }
+    var loginError by remember { mutableStateOf<String?>(null) }
+    var signingIn by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val colors = LocalAppColors.current
     val focusManager = LocalFocusManager.current
@@ -129,8 +135,23 @@ fun LoginScreen(
 
     fun submit() {
         submitted = true
-        if (login.isNotBlank() && password.isNotBlank()) {
-            loginFailed = !onLogin(login.trim(), password)
+        if (signingIn || login.isBlank() || password.isBlank()) return
+        signingIn = true
+        val username = login.trim()
+        val secret = password
+        scope.launch {
+            try {
+                onLogin(username, secret)
+                password = ""
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: JournalException) {
+                loginError = error.message
+            } catch (error: Exception) {
+                loginError = "Не удалось обработать ответ сервера"
+            } finally {
+                signingIn = false
+            }
         }
     }
 
@@ -220,10 +241,10 @@ fun LoginScreen(
                 Spacer(Modifier.height(m.u(15f)))
                 InputField(
                     value = login,
-                    onValueChange = { login = it; loginFailed = false },
+                    onValueChange = { login = it; loginError = null },
                     placeholder = "Введите логин",
                     leadingIcon = Icons.Outlined.Person,
-                    isError = submitted && login.isBlank() || loginFailed,
+                    isError = submitted && login.isBlank(),
                     errorText = "Введите логин",
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     keyboardActions = KeyboardActions(
@@ -246,11 +267,11 @@ fun LoginScreen(
                 Spacer(Modifier.height(m.u(22f)))
                 InputField(
                     value = password,
-                    onValueChange = { password = it; loginFailed = false },
+                    onValueChange = { password = it; loginError = null },
                     placeholder = "Введите пароль",
                     leadingIcon = Icons.Outlined.Lock,
-                    isError = submitted && password.isBlank() || loginFailed,
-                    errorText = if (loginFailed) "Неверный логин или пароль" else "Введите пароль",
+                    isError = submitted && password.isBlank() || loginError != null,
+                    errorText = loginError ?: "Введите пароль",
                     visualTransformation = if (passwordVisible) {
                         VisualTransformation.None
                     } else {
@@ -282,6 +303,7 @@ fun LoginScreen(
                         focusManager.clearFocus()
                         submit()
                     },
+                    enabled = !signingIn,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = maxOf(m.u(103f), 48.dp))
@@ -294,7 +316,7 @@ fun LoginScreen(
                     contentPadding = PaddingValues(vertical = m.u(16f)),
                 ) {
                     Text(
-                        text = "Войти",
+                        text = if (signingIn) "Входим…" else "Войти",
                         fontSize = m.sp(35f),
                         fontWeight = FontWeight.SemiBold,
                         textAlign = TextAlign.Center,
@@ -302,8 +324,10 @@ fun LoginScreen(
                 }
             }
 
-            // Временно: статус бэкенда (GET /health), уберём при появлении настоящего входа
-            HealthStatus(modifier = Modifier.width(contentWidth))
+            if (modeHint.isNotBlank()) {
+                Text(modeHint, color = colors.muted, textAlign = TextAlign.Center,
+                    modifier = Modifier.width(contentWidth).padding(top = 12.dp))
+            }
 
             // Запас снизу, чтобы кнопка не лежала на волнах и не пряталась под панелью жестов
             Spacer(Modifier.height(m.gap(140f) + navigationBar))
@@ -465,7 +489,7 @@ private fun Modifier.appear(order: Int, enabled: Boolean, slide: Dp, fromScale: 
 @Composable
 private fun LoginScreenPreview() {
     AttendanceTheme(darkTheme = false) {
-        LoginScreen(onLogin = { _, _ -> false })
+        LoginScreen(onLogin = { _, _ -> })
     }
 }
 
@@ -473,6 +497,6 @@ private fun LoginScreenPreview() {
 @Composable
 private fun LoginScreenDarkPreview() {
     AttendanceTheme(darkTheme = true) {
-        LoginScreen(onLogin = { _, _ -> false })
+        LoginScreen(onLogin = { _, _ -> })
     }
 }

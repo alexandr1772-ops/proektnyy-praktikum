@@ -28,7 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ru.attendance.tracker.data.DemoData
+import java.time.LocalDate
+import ru.attendance.tracker.data.Account
+import ru.attendance.tracker.data.Group
+import ru.attendance.tracker.data.Journal
+import ru.attendance.tracker.data.Role
 import ru.attendance.tracker.ui.common.AppCard
 import ru.attendance.tracker.ui.common.Avatar
 import ru.attendance.tracker.ui.common.Badge
@@ -37,7 +41,14 @@ import ru.attendance.tracker.ui.common.ScreenPadding
 import ru.attendance.tracker.ui.theme.LocalAppColors
 
 @Composable
-fun ProfileScreen(group: String, onLogout: () -> Unit, modifier: Modifier = Modifier) {
+fun ProfileScreen(
+    account: Account,
+    journal: Journal,
+    group: Group?,
+    sourceLabel: String,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val colors = LocalAppColors.current
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -53,23 +64,25 @@ fun ProfileScreen(group: String, onLogout: () -> Unit, modifier: Modifier = Modi
         ) {
             AppCard(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar("А", colors.soft, colors.primary, size = 64.dp)
+                    Avatar(account.role.label.take(1), colors.soft, colors.primary, size = 64.dp)
                     Spacer(Modifier.width(16.dp))
                     Column {
-                        Text("Администратор", color = colors.title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text(DemoData.DEMO_LOGIN, color = colors.muted, fontSize = 14.sp)
+                        Text(account.role.label, color = colors.title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(account.login, color = colors.muted, fontSize = 14.sp)
                         Spacer(Modifier.height(6.dp))
-                        Badge("Демо-режим", colors.primary, colors.soft)
+                        Badge(sourceLabel, colors.primary, colors.soft)
                     }
                 }
             }
 
             AppCard(modifier = Modifier.fillMaxWidth(), contentPadding = 4.dp) {
-                InfoRow("Группа", group)
-                Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
-                InfoRow("Занятий сегодня", "${DemoData.lessons.size}")
-                Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
-                InfoRow("Студентов в группе", "${DemoData.students.size}")
+                InfoRow("Группа", group?.name ?: "—")
+                if (account.role != Role.Student) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
+                    InfoRow("Занятий сегодня", "${journal.lessons.count { it.groupId == group?.id && it.date == LocalDate.now() }}")
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
+                    InfoRow("Студентов в группе", "${journal.students.count { it.groupId == group?.id }}")
+                }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
                 InfoRow("Версия приложения", "0.1.0")
             }

@@ -18,10 +18,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.outlined.CalendarToday
@@ -41,7 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import ru.attendance.tracker.data.DemoData
+import ru.attendance.tracker.data.Group
+import ru.attendance.tracker.data.Journal
 import ru.attendance.tracker.data.Risk
 import ru.attendance.tracker.data.Student
 import ru.attendance.tracker.ui.common.AppCard
@@ -74,22 +73,28 @@ private fun studentsText(n: Int): String {
 }
 
 @Composable
-fun RiskScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifier = Modifier) {
+fun RiskScreen(
+    journal: Journal,
+    group: Group,
+    onGroupChange: (String) -> Unit,
+    demo: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val colors = LocalAppColors.current
     var sortRisk by rememberSaveable { mutableStateOf(SORT_BY_PERCENT) }
     var sortRest by rememberSaveable { mutableStateOf(SORT_BY_PERCENT) }
 
-    val students = DemoData.students
-    val atRisk = students.filter { it.risk != Risk.Low }
-    val rest = students.filter { it.risk == Risk.Low }
+    val students = journal.studentCards(group.id)
+    val atRisk = students.filter { it.risk == Risk.High || it.risk == Risk.Medium }
+    val rest = students.filter { it.risk == Risk.Low || it.risk == null }
     val high = students.count { it.risk == Risk.High }
     val medium = students.count { it.risk == Risk.Medium }
 
     Column(modifier = modifier.fillMaxSize()) {
         ScreenHeader(
             title = "Группа риска",
-            subtitle = "Студенты с низкой или резко упавшей посещаемостью",
-            trailing = { GroupChip(group, DemoData.groups, onGroupChange) },
+            subtitle = if (demo) "Демо-оценка по отметкам" else "Прогноз посещаемости",
+            trailing = { GroupChip(group.name, journal.groups.map { it.name }, onGroupChange) },
         )
         Spacer(Modifier.height(14.dp))
 
@@ -121,14 +126,13 @@ fun RiskScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifie
                     Text(studentsText(atRisk.size), color = colors.dangerText, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text("Требуют повышенного внимания", color = colors.muted, fontSize = 13.sp)
                 }
-                Icon(Icons.Filled.ChevronRight, null, tint = colors.icon, modifier = Modifier.size(24.dp))
             }
 
             // Три счётчика
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 MetricTile(Icons.Filled.ArrowUpward, colors.dangerText, colors.dangerSoft, high, "Высокий риск", Modifier.weight(1f))
                 MetricTile(Icons.Filled.PriorityHigh, colors.warningText, colors.warningSoft, medium, "Средний риск", Modifier.weight(1f))
-                MetricTile(Icons.Filled.Check, colors.primary, colors.soft, rest.size, "Низкий риск", Modifier.weight(1f))
+                MetricTile(Icons.Filled.Check, colors.primary, colors.soft, students.count { it.risk == Risk.Low }, "Низкий риск", Modifier.weight(1f))
             }
 
             // В зоне риска
@@ -139,8 +143,9 @@ fun RiskScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifie
                 }
                 Spacer(Modifier.height(6.dp))
                 val list = if (sortRisk == SORT_BY_PERCENT) atRisk.sortedBy { it.percent } else atRisk.sortedBy { it.fullName }
+                if (list.isEmpty()) Text("В списке пока нет студентов", color = colors.muted)
                 list.forEachIndexed { index, student ->
-                    StudentRiskRow(index + 1, student, group)
+                    StudentRiskRow(index + 1, student, group.name)
                     if (index != list.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
                 }
             }
@@ -153,8 +158,9 @@ fun RiskScreen(group: String, onGroupChange: (String) -> Unit, modifier: Modifie
                 }
                 Spacer(Modifier.height(6.dp))
                 val list = if (sortRest == SORT_BY_PERCENT) rest.sortedByDescending { it.percent } else rest.sortedBy { it.fullName }
+                if (list.isEmpty()) Text("В списке пока нет студентов", color = colors.muted)
                 list.forEachIndexed { index, student ->
-                    StudentRiskRow(atRisk.size + index + 1, student, group)
+                    StudentRiskRow(atRisk.size + index + 1, student, group.name)
                     if (index != list.lastIndex) Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
                 }
             }
@@ -183,18 +189,19 @@ private fun MetricTile(icon: ImageVector, tint: Color, tile: Color, value: Int, 
 @Composable
 private fun StudentRiskRow(rank: Int, student: Student, group: String) {
     val colors = LocalAppColors.current
-    val (avatarBg, avatarFg) = avatarColors(student.id, student.risk)
+    val (avatarBg, avatarFg) = avatarColors(student.id, student.risk ?: Risk.Low)
     val (badgeText, badgeFg, badgeBg) = when (student.risk) {
         Risk.High -> Triple("Высокий", colors.dangerText, colors.dangerSoft)
         Risk.Medium -> Triple("Средний", colors.warningText, colors.warningSoft)
         Risk.Low -> Triple("Низкий", colors.primary, colors.soft)
+        null -> Triple("Нет прогноза", colors.muted, colors.soft)
     }
     val barColor = when (student.risk) {
         Risk.High -> colors.danger
         Risk.Medium -> colors.warning
-        Risk.Low -> percentBarColor(student.percent)
+        Risk.Low, null -> student.percent?.let { percentBarColor(it) } ?: colors.track
     }
-    val percentTextColor = if (student.risk == Risk.Low) percentColor(student.percent) else barColor
+    val percentTextColor = if (student.risk == Risk.Low || student.risk == null) student.percent?.let { percentColor(it) } ?: colors.muted else barColor
 
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
@@ -206,22 +213,21 @@ private fun StudentRiskRow(rank: Int, student: Student, group: String) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(student.shortName, color = colors.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Icon(Icons.Filled.ChevronRight, null, tint = colors.icon, modifier = Modifier.size(22.dp))
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(group, color = colors.muted, fontSize = 12.sp)
                 Spacer(Modifier.width(8.dp))
                 Badge(badgeText, badgeFg, badgeBg)
                 Spacer(Modifier.weight(1f))
-                Text("${student.percent}%", color = percentTextColor, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 22.dp))
+                Text(student.percent?.let { "$it%" } ?: "—", color = percentTextColor, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 22.dp))
             }
             Spacer(Modifier.height(6.dp))
-            ProgressBar(student.percent / 100f, barColor, Modifier.fillMaxWidth(), 6.dp)
+            student.percent?.let { ProgressBar(it / 100f, barColor, Modifier.fillMaxWidth(), 6.dp) }
             if (student.riskNote != null) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        if (student.riskTrendDown) Icons.Filled.ArrowDownward else Icons.Outlined.CalendarToday,
+                        Icons.Outlined.CalendarToday,
                         null,
                         tint = colors.muted,
                         modifier = Modifier.size(15.dp),
